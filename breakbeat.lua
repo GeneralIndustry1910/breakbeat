@@ -1,6 +1,10 @@
 -- breakbeat
 -- four-lane breakbeat trigger sequencer for norns + crow
--- v1.0.0
+-- v1.1.0
+
+local arc_source = arc
+local toga_enabled = util.file_exists(_path.code .. "toga/lib/togaarc.lua")
+if toga_enabled then arc_source = include "toga/lib/togaarc" end
 
 local patterns = {
   { name = "Straight Break", kick = "x.....x.x....x..", snare = "....x.......x...", hat = "x.x.x.x.x.x.x.x.", perc = "...x.....x....x." },
@@ -14,17 +18,35 @@ local patterns = {
   { name = "Steppy",        kick = "x..x...x..x..x..", snare = "....x.......x...", hat = "xxxxxxx.xxxxxxxx", perc = "..x...x....x..x." },
   { name = "Half-time",     kick = "x.....x...x.....", snare = "........x.......", hat = "x.x.x.x.x.x.x.x.", perc = "...x.......x..x." },
   { name = "Syncopated",    kick = "x....x.x...x..x.", snare = "....x.......x..x", hat = "x.xx.x.xxx.x.x.x", perc = "..x......x.x...." },
-  { name = "Ruff Break",    kick = "x.....x.x..x..x.", snare = "...xx......xx...", hat = "xxx.x.x.xxx.xxxx", perc = "..x....x..x....x" }
+  { name = "Ruff Break",    kick = "x.....x.x..x..x.", snare = "...xx......xx...", hat = "xxx.x.x.xxx.xxxx", perc = "..x....x..x....x" },
+  { name = "Think Break",   kick = "x..x....x.x...x.", snare = "....x.......x...", hat = "x.xxx.x.x.xxx.xx", perc = "..x....x...x...x" },
+  { name = "Hot Pants",     kick = "x....x..x.....x.", snare = "....x.......x...", hat = "x.xx.xxxx.xx.xxx", perc = "...x..x....x..x." },
+  { name = "Apache",        kick = "x.....x.x..x....", snare = "....x.......x...", hat = "x.xxxx.x.xxxx.x.", perc = "...x...x..x...x." },
+  { name = "Funky Drummer", kick = "x..x..x...x..x..", snare = "....x.......x...", hat = "xxxxxx.xxxxxxx.x", perc = "..x....x...x..x." },
+  { name = "Soul Pride",    kick = "x....x.x..x....x", snare = "....x.......x...", hat = "x.xxxx.xxx.xxx.x", perc = "...x..x....x.x.." },
+  { name = "Cold Sweat",    kick = "x..x....x....x..", snare = "....x.......x...", hat = "xxxx.xxxxxxx.xxx", perc = "..x....x..x....x" },
+  { name = "DnB Roller",    kick = "x.....x..x....x.", snare = "....x.....x.x...", hat = "xxxxxxxxxxxxxxxx", perc = "...x...x...x...x" },
+  { name = "Jungle Rush",   kick = "x...x....x..x...", snare = "....x..x..x.x...", hat = "xxx.xxxxxxx.xxxx", perc = "..x...x....x..x." },
+  { name = "Neuro Step",    kick = "x......xx..x....", snare = "....x.......x...", hat = "x.xx..xxx.xx..xx", perc = "..x..x....x..x.." },
+  { name = "Garage Swing",  kick = "x.......x....x..", snare = "....x.......x...", hat = "x.xx.x.xx.xx.x.x", perc = "...x..x....x..x." },
+  { name = "Footwork",      kick = "x..x..x.x..x..x.", snare = "....x.......x...", hat = "x.x.x.x.x.x.x.x.", perc = ".x...x...x...x.." },
+  { name = "Glitch Break",  kick = "x.x....x..x.x...", snare = "...xx.....x.x..x", hat = "xx.xxxx.xx.xxxxx", perc = ".x....xx...x..x." }
 }
 
 local lane_keys = { "kick", "snare", "hat", "perc" }
 local lane_names = { "K", "S", "H", "P" }
 local pattern_index = 1
+local mutation_base = 0
+local mutation_cv = 0
 local mutation = 0
+local gate_probability = 100
+local chaos = 0
+local loop_length = 16
 local position = 0
 local playing = true
 local sequence_clock = nil
 local current = {}
+local arc_device = nil
 
 local function clamp(value, low, high)
   return math.max(low, math.min(high, value))
@@ -44,16 +66,48 @@ local function copy_pattern()
   end
 end
 
+local function update_mutation()
+  mutation = clamp(mutation_base + mutation_cv, 0, 100)
+end
+
+local function rotate_row(row, amount)
+  local rotated = {}
+  for step = 1, 16 do
+    rotated[step] = row[((step - amount - 1) % 16) + 1]
+  end
+  return rotated
+end
+
+local function reverse_row(row)
+  local reversed = {}
+  for step = 1, 16 do reversed[step] = row[17 - step] end
+  return reversed
+end
+
 local function make_variation()
   copy_pattern()
-  if mutation == 0 then return end
+  if mutation > 0 then
+    -- At maximum, each cell has a 30% chance of changing state.
+    local chance = (mutation / 100) * 0.30
+    for lane = 1, 4 do
+      for step = 1, 16 do
+        if math.random() < chance then
+          current[lane][step] = not current[lane][step]
+        end
+      end
+    end
+  end
 
-  -- At maximum, each cell has a 30% chance of changing state.
-  local chance = (mutation / 100) * 0.30
-  for lane = 1, 4 do
-    for step = 1, 16 do
-      if math.random() < chance then
-        current[lane][step] = not current[lane][step]
+
+  -- Chaos makes bar-stable timing transformations, separate from mutation.
+  if chaos > 0 then
+    local max_shift = math.max(1, math.floor(chaos / 25))
+    for lane = 1, 4 do
+      if math.random(100) <= chaos then
+        current[lane] = rotate_row(current[lane], math.random(-max_shift, max_shift))
+      end
+      if math.random(200) <= chaos then
+        current[lane] = reverse_row(current[lane])
       end
     end
   end
@@ -61,7 +115,7 @@ end
 
 local function trigger_step(step)
   for lane = 1, 4 do
-    if current[lane][step] then
+    if current[lane][step] and math.random(100) <= gate_probability then
       crow.output[lane]()
     end
   end
@@ -71,7 +125,7 @@ local function sequence_loop()
   while true do
     if playing then
       clock.sync(1 / 4)
-      position = (position % 16) + 1
+      position = (position % loop_length) + 1
       if position == 1 then make_variation() end
       trigger_step(position)
       redraw()
@@ -79,6 +133,44 @@ local function sequence_loop()
       clock.sleep(0.05)
     end
   end
+end
+
+
+local function arc_redraw()
+  if not arc_device then return end
+  local tau = math.pi * 2
+  local values = {
+    gate_probability / 100,
+    pattern_index / #patterns,
+    chaos / 100,
+    loop_length / 16
+  }
+
+  arc_device:all(0)
+  for ring = 1, 4 do
+    arc_device:segment(ring, 0, tau * values[ring], 15)
+    arc_device:led(ring, 1, 4)
+  end
+  arc_device:refresh()
+end
+
+local function setup_arc()
+  arc_device = arc_source.connect()
+  if not arc_device then return end
+
+  arc_device.delta = function(ring, delta)
+    local direction = delta > 0 and 1 or -1
+    if ring == 1 then
+      params:set("breakbeat_probability", clamp(gate_probability + delta, 0, 100))
+    elseif ring == 2 then
+      params:set("breakbeat_pattern", clamp(pattern_index + direction, 1, #patterns))
+    elseif ring == 3 then
+      params:set("breakbeat_chaos", clamp(chaos + delta, 0, 100))
+    elseif ring == 4 then
+      params:set("breakbeat_loop_length", clamp(loop_length + direction, 1, 16))
+    end
+  end
+  arc_redraw()
 end
 
 function init()
@@ -89,6 +181,13 @@ function init()
     crow.output[output].volts = 0
     crow.output[output].action = "pulse(0.01, 5, 1)"
   end
+
+  crow.input[2].stream = function(volts)
+    mutation_cv = clamp(volts * 20, -100, 100)
+    update_mutation()
+    redraw()
+  end
+  crow.input[2].mode("stream", 0.1)
 
   params:add_number("breakbeat_bpm", "BPM", 40, 240, 120)
   params:set_action("breakbeat_bpm", function(value)
@@ -105,18 +204,45 @@ function init()
     pattern_index = value
     position = 0
     make_variation()
+    arc_redraw()
     redraw()
   end)
 
   params:add_number("breakbeat_mutation", "Mutation", 0, 100, 0)
   params:set_action("breakbeat_mutation", function(value)
-    mutation = value
+    mutation_base = value
+    update_mutation()
     make_variation()
+    redraw()
+  end)
+
+  params:add_number("breakbeat_probability", "Gate Probability", 0, 100, 100)
+  params:set_action("breakbeat_probability", function(value)
+    gate_probability = value
+    arc_redraw()
+    redraw()
+  end)
+
+  params:add_number("breakbeat_chaos", "Chaos", 0, 100, 0)
+  params:set_action("breakbeat_chaos", function(value)
+    chaos = value
+    make_variation()
+    arc_redraw()
+    redraw()
+  end)
+
+  params:add_number("breakbeat_loop_length", "Loop Length", 1, 16, 16)
+  params:set_action("breakbeat_loop_length", function(value)
+    loop_length = value
+    position = 0
+    make_variation()
+    arc_redraw()
     redraw()
   end)
 
   params:set("clock_tempo", params:get("breakbeat_bpm"))
   make_variation()
+  setup_arc()
   sequence_clock = clock.run(sequence_loop)
 end
 
@@ -126,7 +252,7 @@ function enc(number, delta)
   elseif number == 2 then
     params:delta("breakbeat_pattern", delta)
   elseif number == 3 then
-    params:set("breakbeat_mutation", clamp(mutation + delta, 0, 100))
+    params:set("breakbeat_mutation", clamp(mutation_base + delta, 0, 100))
   end
 end
 
@@ -174,7 +300,7 @@ function redraw()
         screen.stroke()
       end
 
-      screen.level(current[lane][step] and 15 or 2)
+      screen.level(step > loop_length and 1 or (current[lane][step] and 15 or 2))
       screen.move(x, y)
       screen.text(current[lane][step] and "x" or ".")
     end
@@ -183,13 +309,15 @@ function redraw()
   screen.level(10)
   screen.font_size(8)
   screen.move(2, 63)
-  screen.text("BPM " .. params:get("breakbeat_bpm"))
+  screen.text("B" .. params:get("breakbeat_bpm") .. " M" .. math.floor(mutation + 0.5))
   screen.move(126, 63)
-  screen.text_right("MUT " .. mutation .. "%  K3 " .. (playing and "STOP" or "PLAY"))
+  screen.text_right("G" .. gate_probability .. " C" .. chaos .. " L" .. loop_length)
   screen.update()
 end
 
 function cleanup()
   if sequence_clock then clock.cancel(sequence_clock) end
+  crow.input[2].mode("none")
+  if arc_device and arc_device.cleanup then arc_device:cleanup() end
   for output = 1, 4 do crow.output[output].volts = 0 end
 end
