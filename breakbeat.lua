@@ -1,10 +1,14 @@
 -- breakbeat
 -- four-lane breakbeat trigger sequencer for norns + crow
--- v1.1.0
+-- v1.2.0
 
 local arc_source = arc
+local grid_source = grid
 local toga_enabled = util.file_exists(_path.code .. "toga/lib/togaarc.lua")
-if toga_enabled then arc_source = include "toga/lib/togaarc" end
+if toga_enabled then
+  arc_source = include "toga/lib/togaarc"
+  grid_source = include "toga/lib/togagrid"
+end
 
 local patterns = {
   { name = "Straight Break", kick = "x.....x.x....x..", snare = "....x.......x...", hat = "x.x.x.x.x.x.x.x.", perc = "...x.....x....x." },
@@ -47,22 +51,41 @@ local playing = true
 local sequence_clock = nil
 local current = {}
 local arc_device = nil
+local grid_device = nil
+local edited_patterns = {}
 
 local function clamp(value, low, high)
   return math.max(low, math.min(high, value))
 end
 
-local function copy_pattern()
-  current = {}
-  local source = patterns[pattern_index]
+local function authored_pattern(index)
+  local rows = {}
+  local source = patterns[index]
 
   for lane = 1, 4 do
-    local row = {}
+    rows[lane] = {}
     local text = source[lane_keys[lane]]
     for step = 1, 16 do
-      row[step] = text:sub(step, step) == "x"
+      rows[lane][step] = text:sub(step, step) == "x"
     end
-    current[lane] = row
+  end
+  return rows
+end
+
+local function editable_pattern()
+  if not edited_patterns[pattern_index] then
+    edited_patterns[pattern_index] = authored_pattern(pattern_index)
+  end
+  return edited_patterns[pattern_index]
+end
+
+local function copy_pattern()
+  local source = editable_pattern()
+  current = {}
+
+  for lane = 1, 4 do
+    current[lane] = {}
+    for step = 1, 16 do current[lane][step] = source[lane][step] end
   end
 end
 
@@ -113,6 +136,56 @@ local function make_variation()
   end
 end
 
+local function reset_pattern()
+  edited_patterns[pattern_index] = authored_pattern(pattern_index)
+  position = 0
+  make_variation()
+  redraw()
+end
+
+local function toggle_step(lane, step)
+  local pattern = editable_pattern()
+  pattern[lane][step] = not pattern[lane][step]
+  make_variation()
+  redraw()
+end
+
+local function grid_redraw()
+  if not grid_device then return end
+  local pattern = editable_pattern()
+  grid_device:all(0)
+
+  for lane = 1, 4 do
+    for step = 1, 16 do
+      local level = pattern[lane][step] and 12 or 1
+      if step > loop_length then level = pattern[lane][step] and 4 or 0 end
+      if playing and step == position then level = pattern[lane][step] and 15 or 6 end
+      grid_device:led(step, lane, level)
+    end
+  end
+
+  -- Bottom-right button restores the selected pattern's authored version.
+  grid_device:led(16, 8, 10)
+  grid_device:refresh()
+end
+
+local function setup_grid()
+  grid_device = grid_source.connect()
+  if not grid_device then return end
+
+  grid_device.key = function(x, y, z)
+    if z == 0 then return end
+    if y >= 1 and y <= 4 and x >= 1 and x <= 16 then
+      toggle_step(y, x)
+      grid_redraw()
+    elseif x == 16 and y == 8 then
+      reset_pattern()
+      grid_redraw()
+    end
+  end
+  grid_redraw()
+end
+
 local function trigger_step(step)
   for lane = 1, 4 do
     if current[lane][step] and math.random(100) <= gate_probability then
@@ -129,6 +202,7 @@ local function sequence_loop()
       if position == 1 then make_variation() end
       trigger_step(position)
       redraw()
+      grid_redraw()
     else
       clock.sleep(0.05)
     end
@@ -206,6 +280,7 @@ function init()
     make_variation()
     arc_redraw()
     redraw()
+    grid_redraw()
   end)
 
   params:add_number("breakbeat_mutation", "Mutation", 0, 100, 0)
@@ -238,11 +313,13 @@ function init()
     make_variation()
     arc_redraw()
     redraw()
+    grid_redraw()
   end)
 
   params:set("clock_tempo", params:get("breakbeat_bpm"))
   make_variation()
   setup_arc()
+  setup_grid()
   sequence_clock = clock.run(sequence_loop)
 end
 
@@ -260,9 +337,8 @@ function key(number, state)
   if state == 0 then return end
 
   if number == 2 then
-    position = 0
-    make_variation()
-    redraw()
+    reset_pattern()
+    grid_redraw()
   elseif number == 3 then
     playing = not playing
     if playing then
@@ -270,6 +346,7 @@ function key(number, state)
       make_variation()
     end
     redraw()
+    grid_redraw()
   end
 end
 
@@ -319,5 +396,6 @@ function cleanup()
   if sequence_clock then clock.cancel(sequence_clock) end
   crow.input[2].mode("none")
   if arc_device and arc_device.cleanup then arc_device:cleanup() end
+  if grid_device and grid_device.cleanup then grid_device:cleanup() end
   for output = 1, 4 do crow.output[output].volts = 0 end
 end
