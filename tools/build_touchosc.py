@@ -39,7 +39,15 @@ for node in nodes:
 # Reuse Toga's proven button messaging, but present it as four broad strips.
 controls = deepcopy(grid)
 controls.set("ID", str(uuid.uuid4()))
+controls.set("type", "GROUP")
 property_value(controls, "name").text = "breakbeatcontrol"
+property_value(controls, "background").text = "0"
+property_value(controls, "outline").text = "0"
+property_value(controls, "interactive").text = "0"
+container_color = property_value(controls, "color")
+container_color.find("r").text = "0"
+container_color.find("g").text = "0"
+container_color.find("b").text = "0"
 frame = property_value(controls, "frame")
 frame.find("y").text = "0"
 frame.find("h").text = "240"
