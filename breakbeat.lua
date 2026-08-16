@@ -1,12 +1,11 @@
 -- breakbeat
 -- four-lane breakbeat trigger sequencer for norns + crow
--- v1.2.0
+-- v1.3.0
 
 local arc_source = arc
 local grid_source = grid
-local toga_enabled = util.file_exists(_path.code .. "toga/lib/togaarc.lua")
+local toga_enabled = util.file_exists(_path.code .. "toga/lib/togagrid.lua")
 if toga_enabled then
-  arc_source = include "toga/lib/togaarc"
   grid_source = include "toga/lib/togagrid"
 end
 
@@ -34,7 +33,15 @@ local patterns = {
   { name = "Neuro Step",    kick = "x......xx..x....", snare = "....x.......x...", hat = "x.xx..xxx.xx..xx", perc = "..x..x....x..x.." },
   { name = "Garage Swing",  kick = "x.......x....x..", snare = "....x.......x...", hat = "x.xx.x.xx.xx.x.x", perc = "...x..x....x..x." },
   { name = "Footwork",      kick = "x..x..x.x..x..x.", snare = "....x.......x...", hat = "x.x.x.x.x.x.x.x.", perc = ".x...x...x...x.." },
-  { name = "Glitch Break",  kick = "x.x....x..x.x...", snare = "...xx.....x.x..x", hat = "xx.xxxx.xx.xxxxx", perc = ".x....xx...x..x." }
+  { name = "Glitch Break",  kick = "x.x....x..x.x...", snare = "...xx.....x.x..x", hat = "xx.xxxx.xx.xxxxx", perc = ".x....xx...x..x." },
+  { name = "Off Kilter",    kick = "x....x....x..x..", snare = "......x......x..", hat = "x.x..x.x.x..x.x.", perc = "...x....x..x...." },
+  { name = "Lopsided",      kick = "x......x..x....x", snare = "...x......x.....", hat = "x..x.x..x.x..x.x", perc = ".....x..x....x.." },
+  { name = "Late Snare",    kick = "x....x...x......", snare = ".....x.......x..", hat = "x.x.x..xx.x.x..x", perc = "...x......x..x.." },
+  { name = "Skipping",      kick = "x..x.....x....x.", snare = "......x....x....", hat = "xx..x.xxx..x.x..", perc = "....x....x....x." },
+  { name = "Displaced",     kick = "..x....x....x...", snare = "......x.......x.", hat = ".x.x.x.x.x.x.x.x", perc = "x....x....x....x" },
+  { name = "Tripwire",      kick = "x......x.x.....x", snare = "...x.......x....", hat = "x.xx..x.x..xx.x.", perc = ".....x....x..x.." },
+  { name = "Stumble",       kick = "x....x.x.....x..", snare = ".......x....x...", hat = "xx.x..xxx.x..x.x", perc = "...x......x....x" },
+  { name = "Sideways",      kick = "..x..x.....x..x.", snare = ".....x......x...", hat = "x..xx.x..xx.x..x", perc = "x......x.....x.." }
 }
 
 local lane_keys = { "kick", "snare", "hat", "perc" }
@@ -53,6 +60,8 @@ local current = {}
 local arc_device = nil
 local grid_device = nil
 local edited_patterns = {}
+local old_osc_event = nil
+local ratchet_pulses = { 0, 1, 2, 4 }
 
 local function clamp(value, low, high)
   return math.max(low, math.min(high, value))
@@ -66,7 +75,7 @@ local function authored_pattern(index)
     rows[lane] = {}
     local text = source[lane_keys[lane]]
     for step = 1, 16 do
-      rows[lane][step] = text:sub(step, step) == "x"
+      rows[lane][step] = text:sub(step, step) == "x" and 1 or 0
     end
   end
   return rows
@@ -115,7 +124,7 @@ local function make_variation()
     for lane = 1, 4 do
       for step = 1, 16 do
         if math.random() < chance then
-          current[lane][step] = not current[lane][step]
+          current[lane][step] = current[lane][step] > 0 and 0 or 1
         end
       end
     end
@@ -143,30 +152,92 @@ local function reset_pattern()
   redraw()
 end
 
-local function toggle_step(lane, step)
+local function cycle_step(lane, step)
   local pattern = editable_pattern()
-  pattern[lane][step] = not pattern[lane][step]
+  pattern[lane][step] = (pattern[lane][step] + 1) % 4
   make_variation()
   redraw()
 end
 
 local function grid_redraw()
   if not grid_device then return end
-  local pattern = editable_pattern()
   grid_device:all(0)
 
   for lane = 1, 4 do
     for step = 1, 16 do
-      local level = pattern[lane][step] and 12 or 1
-      if step > loop_length then level = pattern[lane][step] and 4 or 0 end
-      if playing and step == position then level = pattern[lane][step] and 15 or 6 end
+      local mode = current[lane][step]
+      local level = ({ 1, 8, 12, 15 })[mode + 1]
+      if step > loop_length then level = mode > 0 and 3 or 0 end
+      if playing and step == position then level = math.max(level, 14) end
       grid_device:led(step, lane, level)
     end
+  end
+
+  for index = 1, #patterns do
+    local x = ((index - 1) % 16) + 1
+    local y = math.floor((index - 1) / 16) + 5
+    grid_device:led(x, y, index == pattern_index and 15 or 3)
   end
 
   -- Bottom-right button restores the selected pattern's authored version.
   grid_device:led(16, 8, 10)
   grid_device:refresh()
+end
+
+local function control_redraw()
+  if not grid_device or not grid_device.dest then return end
+  local selected = {
+    math.floor((gate_probability / 100) * 15 + 0.5) + 1,
+    math.floor((mutation_base / 100) * 15 + 0.5) + 1,
+    math.floor((chaos / 100) * 15 + 0.5) + 1,
+    loop_length
+  }
+
+  for _, destination in pairs(grid_device.dest) do
+    for row = 1, 4 do
+      for column = 1, 16 do
+        local index = column + ((row - 1) * 16)
+        osc.send(destination, "/breakbeatcontrol/" .. index,
+          { column == selected[row] and 1 or 0 })
+      end
+    end
+  end
+end
+
+local function handle_touchosc_control(path, args)
+  local prefix = "/breakbeatcontrol/"
+  local index = tonumber(path:sub(#prefix + 1))
+  if not index or index < 1 or index > 64 then return end
+  if not args[1] or args[1] <= 0 then
+    control_redraw()
+    return
+  end
+
+  local column = ((index - 1) % 16) + 1
+  local row = math.floor((index - 1) / 16) + 1
+  if row == 1 then
+    params:set("breakbeat_probability", math.floor(((column - 1) / 15) * 100 + 0.5))
+  elseif row == 2 then
+    params:set("breakbeat_mutation", math.floor(((column - 1) / 15) * 100 + 0.5))
+  elseif row == 3 then
+    params:set("breakbeat_chaos", math.floor(((column - 1) / 15) * 100 + 0.5))
+  elseif row == 4 then
+    params:set("breakbeat_loop_length", column)
+  end
+  control_redraw()
+end
+
+local function setup_touchosc()
+  old_osc_event = osc.event
+  osc.event = function(path, args, from)
+    if path:sub(1, 18) == "/breakbeatcontrol/" then
+      handle_touchosc_control(path, args)
+      return
+    end
+
+    if old_osc_event then old_osc_event(path, args, from) end
+    if path:sub(1, 16) == "/toga_connection" then control_redraw() end
+  end
 end
 
 local function setup_grid()
@@ -176,8 +247,11 @@ local function setup_grid()
   grid_device.key = function(x, y, z)
     if z == 0 then return end
     if y >= 1 and y <= 4 and x >= 1 and x <= 16 then
-      toggle_step(y, x)
+      cycle_step(y, x)
       grid_redraw()
+    elseif y == 5 or y == 6 then
+      local selected = x + ((y - 5) * 16)
+      if selected <= #patterns then params:set("breakbeat_pattern", selected) end
     elseif x == 16 and y == 8 then
       reset_pattern()
       grid_redraw()
@@ -186,10 +260,22 @@ local function setup_grid()
   grid_redraw()
 end
 
+local function fire_ratchet(lane, pulses)
+  for pulse = 1, pulses do
+    crow.output[lane]()
+    if pulse < pulses then clock.sync(1 / (4 * pulses)) end
+  end
+end
+
 local function trigger_step(step)
   for lane = 1, 4 do
-    if current[lane][step] and math.random(100) <= gate_probability then
-      crow.output[lane]()
+    local pulses = ratchet_pulses[current[lane][step] + 1]
+    if pulses > 0 and math.random(100) <= gate_probability then
+      if pulses == 1 then
+        crow.output[lane]()
+      else
+        clock.run(fire_ratchet, lane, pulses)
+      end
     end
   end
 end
@@ -288,13 +374,16 @@ function init()
     mutation_base = value
     update_mutation()
     make_variation()
+    control_redraw()
     redraw()
+    grid_redraw()
   end)
 
   params:add_number("breakbeat_probability", "Gate Probability", 0, 100, 100)
   params:set_action("breakbeat_probability", function(value)
     gate_probability = value
     arc_redraw()
+    control_redraw()
     redraw()
   end)
 
@@ -303,7 +392,9 @@ function init()
     chaos = value
     make_variation()
     arc_redraw()
+    control_redraw()
     redraw()
+    grid_redraw()
   end)
 
   params:add_number("breakbeat_loop_length", "Loop Length", 1, 16, 16)
@@ -312,6 +403,7 @@ function init()
     position = 0
     make_variation()
     arc_redraw()
+    control_redraw()
     redraw()
     grid_redraw()
   end)
@@ -320,6 +412,8 @@ function init()
   make_variation()
   setup_arc()
   setup_grid()
+  setup_touchosc()
+  control_redraw()
   sequence_clock = clock.run(sequence_loop)
 end
 
@@ -377,9 +471,11 @@ function redraw()
         screen.stroke()
       end
 
-      screen.level(step > loop_length and 1 or (current[lane][step] and 15 or 2))
+      local mode = current[lane][step]
+      local symbol = ({ ".", "x", "2", "4" })[mode + 1]
+      screen.level(step > loop_length and 1 or (mode > 0 and 15 or 2))
       screen.move(x, y)
-      screen.text(current[lane][step] and "x" or ".")
+      screen.text(symbol)
     end
   end
 
@@ -395,6 +491,7 @@ end
 function cleanup()
   if sequence_clock then clock.cancel(sequence_clock) end
   crow.input[2].mode("none")
+  if old_osc_event then osc.event = old_osc_event end
   if arc_device and arc_device.cleanup then arc_device:cleanup() end
   if grid_device and grid_device.cleanup then grid_device:cleanup() end
   for output = 1, 4 do crow.output[output].volts = 0 end
