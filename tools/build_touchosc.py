@@ -81,7 +81,7 @@ for index, button in enumerate(buttons[:64]):
     color.find("b").text = str(blue)
 
 
-def make_lane_buttons(name, x, color_values):
+def make_lane_buttons(name, x, color_values, button_type=0):
     group = deepcopy(controls)
     group.set("ID", str(uuid.uuid4()))
     property_value(group, "name").text = name
@@ -99,6 +99,7 @@ def make_lane_buttons(name, x, color_values):
     for lane, button in enumerate(lane_buttons[:4]):
         button.set("ID", str(uuid.uuid4()))
         property_value(button, "name").text = str(lane + 1)
+        property_value(button, "buttonType").text = str(button_type)
         button_frame = property_value(button, "frame")
         button_frame.find("x").text = "3"
         button_frame.find("y").text = str(3 + (lane * 60))
@@ -112,7 +113,7 @@ def make_lane_buttons(name, x, color_values):
 
 
 roll_buttons = make_lane_buttons("breakbeatroll", 0, (1.0, 0.55, 0.10))
-mute_buttons = make_lane_buttons("breakbeatmute", 1020, (1.0, 0.15, 0.15))
+mute_buttons = make_lane_buttons("breakbeatmute", 1020, (1.0, 0.15, 0.15), 1)
 
 children.insert(0, controls)
 children.insert(1, roll_buttons)
