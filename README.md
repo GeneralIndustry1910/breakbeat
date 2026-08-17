@@ -35,25 +35,32 @@ The four colored control strips across the top each contain 16 large buttons:
 - Pink row: chaos, 0-100%
 - Purple row: loop length, 1-16 steps
 
-The lower 16x8 grid is arranged as follows:
+The lower grid and its side buttons are arranged as follows:
 
+- Orange buttons on the left: hold a lane for a clock-synchronized 16th-note roll
 - Row 1: kick
 - Row 2: snare
 - Row 3: hat
 - Row 4: percussion
 - Row 5: patterns 1-16
 - Row 6: patterns 17-32
+- Row 7: patterns 33-38
+- Red buttons on the right: mute/unmute each drum lane
 - Bottom-right button: restore the selected pattern to its authored version
 
 Rows 1-4 display the actual pattern currently playing, including mutation, rotation, and reversal. The playhead is highlighted.
 
-Tap a drum step repeatedly to cycle through its gate modes:
+Short-tap a drum step repeatedly to cycle through its gate modes:
 
 ```text
 off -> single pulse -> two pulses -> four pulses -> off
 ```
 
 Two- and four-pulse ratchets are evenly synchronized inside the current 16th-note step, so they continue to follow the selected Norns clock source. Increasing LED brightness indicates single, double, and four-pulse gates.
+
+Press and hold an individual drum step for about half a second, then release it, to clear that trigger directly without cycling through the ratchet modes.
+
+Hold one of the four orange roll buttons to repeatedly fire that lane on synchronized 16th notes. The roll stops immediately when the button is released. Lane mutes also silence manual rolls.
 
 Manual edits are maintained separately for each pattern during the current session. Mutation and chaos generate from the edited pattern without permanently overwriting it.
 

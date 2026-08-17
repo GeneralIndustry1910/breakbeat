@@ -29,7 +29,13 @@ page = document.find("node")
 children = page.find("children")
 nodes = list(children.findall("node"))
 
+page_frame = property_value(page, "frame")
+page_frame.find("w").text = "1080"
+
 grid = next(node for node in nodes if property_text(node, "name") == "togagrid")
+connection = next(node for node in nodes if property_text(node, "name") == "toga_connection")
+property_value(grid, "frame").find("x").text = "60"
+property_value(connection, "frame").find("x").text = "1025"
 
 # Remove Toga's four encoder groups. The connection button and 16x8 grid remain.
 for node in nodes:
@@ -49,6 +55,7 @@ container_color.find("r").text = "0"
 container_color.find("g").text = "0"
 container_color.find("b").text = "0"
 frame = property_value(controls, "frame")
+frame.find("x").text = "60"
 frame.find("y").text = "0"
 frame.find("h").text = "240"
 
@@ -73,7 +80,43 @@ for index, button in enumerate(buttons[:64]):
     color.find("g").text = str(green)
     color.find("b").text = str(blue)
 
+
+def make_lane_buttons(name, x, color_values):
+    group = deepcopy(controls)
+    group.set("ID", str(uuid.uuid4()))
+    property_value(group, "name").text = name
+    group_frame = property_value(group, "frame")
+    group_frame.find("x").text = str(x)
+    group_frame.find("y").text = "260"
+    group_frame.find("w").text = "60"
+    group_frame.find("h").text = "240"
+
+    group_children = group.find("children")
+    lane_buttons = list(group_children.findall("node"))
+    for button in lane_buttons[4:]:
+        group_children.remove(button)
+
+    for lane, button in enumerate(lane_buttons[:4]):
+        button.set("ID", str(uuid.uuid4()))
+        property_value(button, "name").text = str(lane + 1)
+        button_frame = property_value(button, "frame")
+        button_frame.find("x").text = "3"
+        button_frame.find("y").text = str(3 + (lane * 60))
+        button_frame.find("w").text = "54"
+        button_frame.find("h").text = "54"
+        button_color = property_value(button, "color")
+        button_color.find("r").text = str(color_values[0])
+        button_color.find("g").text = str(color_values[1])
+        button_color.find("b").text = str(color_values[2])
+    return group
+
+
+roll_buttons = make_lane_buttons("breakbeatroll", 0, (1.0, 0.55, 0.10))
+mute_buttons = make_lane_buttons("breakbeatmute", 1020, (1.0, 0.15, 0.15))
+
 children.insert(0, controls)
+children.insert(1, roll_buttons)
+children.insert(2, mute_buttons)
 xml = ET.tostring(document, encoding="utf-8", xml_declaration=True)
 OUTPUT.write_bytes(zlib.compress(xml, level=9))
 print(f"wrote {OUTPUT} ({len(xml)} bytes uncompressed)")

@@ -1,6 +1,6 @@
 -- breakbeat
 -- four-lane breakbeat trigger sequencer for norns + crow
--- v1.3.0
+-- v1.4.0
 
 local arc_source = arc
 local grid_source = grid
@@ -41,7 +41,13 @@ local patterns = {
   { name = "Displaced",     kick = "..x....x....x...", snare = "......x.......x.", hat = ".x.x.x.x.x.x.x.x", perc = "x....x....x....x" },
   { name = "Tripwire",      kick = "x......x.x.....x", snare = "...x.......x....", hat = "x.xx..x.x..xx.x.", perc = ".....x....x..x.." },
   { name = "Stumble",       kick = "x....x.x.....x..", snare = ".......x....x...", hat = "xx.x..xxx.x..x.x", perc = "...x......x....x" },
-  { name = "Sideways",      kick = "..x..x.....x..x.", snare = ".....x......x...", hat = "x..xx.x..xx.x..x", perc = "x......x.....x.." }
+  { name = "Sideways",      kick = "..x..x.....x..x.", snare = ".....x......x...", hat = "x..xx.x..xx.x..x", perc = "x......x.....x.." },
+  { name = "Four on Floor", kick = "x...x...x...x...", snare = "....x.......x...", hat = "x.x.x.x.x.x.x.x.", perc = "................" },
+  { name = "Driving Techno",kick = "x...x...x...x...", snare = "....x.......x...", hat = ".x.x.x.x.x.x.x.x", perc = "..x...x...x...x." },
+  { name = "Warehouse",     kick = "x...x...x...x...", snare = "....x.......x...", hat = "xxxxxxxxxxxxxxxx", perc = "...x...x...x...x" },
+  { name = "Minimal Techno",kick = "x...x...x...x...", snare = "........x.......", hat = "..x...x...x...x.", perc = "......x......x.." },
+  { name = "Rumble Techno", kick = "x...x...x...x...", snare = "....x.......x...", hat = "x.x.xx.x.x.x.xx.", perc = "...x...x...x...x" },
+  { name = "Peak Time",     kick = "x...x...x...x...", snare = "....x.......x...", hat = "xxxxxxxxxxxxxxxx", perc = "..x.....x...x..." }
 }
 
 local lane_keys = { "kick", "snare", "hat", "perc" }
@@ -62,6 +68,10 @@ local grid_device = nil
 local edited_patterns = {}
 local old_osc_event = nil
 local ratchet_pulses = { 0, 1, 2, 4 }
+local lane_muted = { false, false, false, false }
+local roll_active = { false, false, false, false }
+local roll_clocks = {}
+local step_press = {}
 
 local function clamp(value, low, high)
   return math.max(low, math.min(high, value))
@@ -159,6 +169,13 @@ local function cycle_step(lane, step)
   redraw()
 end
 
+local function clear_step(lane, step)
+  local pattern = editable_pattern()
+  pattern[lane][step] = 0
+  make_variation()
+  redraw()
+end
+
 local function grid_redraw()
   if not grid_device then return end
   grid_device:all(0)
@@ -169,6 +186,7 @@ local function grid_redraw()
       local level = ({ 1, 8, 12, 15 })[mode + 1]
       if step > loop_length then level = mode > 0 and 3 or 0 end
       if playing and step == position then level = math.max(level, 14) end
+      if lane_muted[lane] then level = math.min(level, 2) end
       grid_device:led(step, lane, level)
     end
   end
@@ -182,6 +200,33 @@ local function grid_redraw()
   -- Bottom-right button restores the selected pattern's authored version.
   grid_device:led(16, 8, 10)
   grid_device:refresh()
+end
+
+local function roll_loop(lane)
+  while roll_active[lane] do
+    if not lane_muted[lane] then crow.output[lane]() end
+    clock.sync(1 / 4)
+  end
+end
+
+local function start_roll(lane)
+  if roll_active[lane] then return end
+  roll_active[lane] = true
+  roll_clocks[lane] = clock.run(roll_loop, lane)
+end
+
+local function stop_roll(lane)
+  roll_active[lane] = false
+  if roll_clocks[lane] then
+    clock.cancel(roll_clocks[lane])
+    roll_clocks[lane] = nil
+  end
+end
+
+local function toggle_mute(lane)
+  lane_muted[lane] = not lane_muted[lane]
+  grid_redraw()
+  redraw()
 end
 
 local function control_redraw()
@@ -200,6 +245,12 @@ local function control_redraw()
         osc.send(destination, "/breakbeatcontrol/" .. index,
           { column == selected[row] and 1 or 0 })
       end
+    end
+    for lane = 1, 4 do
+      osc.send(destination, "/breakbeatmute/" .. lane,
+        { lane_muted[lane] and 1 or 0 })
+      osc.send(destination, "/breakbeatroll/" .. lane,
+        { roll_active[lane] and 1 or 0 })
     end
   end
 end
@@ -227,11 +278,32 @@ local function handle_touchosc_control(path, args)
   control_redraw()
 end
 
+local function lane_from_path(path, prefix)
+  local lane = tonumber(path:sub(#prefix + 1))
+  if lane and lane >= 1 and lane <= 4 then return lane end
+  return nil
+end
+
 local function setup_touchosc()
   old_osc_event = osc.event
   osc.event = function(path, args, from)
-    if path:sub(1, 18) == "/breakbeatcontrol/" then
+    local control_prefix = "/breakbeatcontrol/"
+    local mute_prefix = "/breakbeatmute/"
+    local roll_prefix = "/breakbeatroll/"
+    if path:sub(1, #control_prefix) == control_prefix then
       handle_touchosc_control(path, args)
+      return
+    elseif path:sub(1, #mute_prefix) == mute_prefix then
+      local lane = lane_from_path(path, mute_prefix)
+      if lane and args[1] and args[1] > 0 then toggle_mute(lane) end
+      control_redraw()
+      return
+    elseif path:sub(1, #roll_prefix) == roll_prefix then
+      local lane = lane_from_path(path, roll_prefix)
+      if lane then
+        if args[1] and args[1] > 0 then start_roll(lane) else stop_roll(lane) end
+      end
+      control_redraw()
       return
     end
 
@@ -245,11 +317,24 @@ local function setup_grid()
   if not grid_device then return end
 
   grid_device.key = function(x, y, z)
-    if z == 0 then return end
     if y >= 1 and y <= 4 and x >= 1 and x <= 16 then
-      cycle_step(y, x)
-      grid_redraw()
-    elseif y == 5 or y == 6 then
+      step_press[y] = step_press[y] or {}
+      if z > 0 then
+        step_press[y][x] = clock.get_beats()
+      else
+        local started = step_press[y][x]
+        step_press[y][x] = nil
+        if started then
+          local held_seconds = (clock.get_beats() - started) * clock.get_beat_sec()
+          if held_seconds >= 0.45 then clear_step(y, x) else cycle_step(y, x) end
+          grid_redraw()
+        end
+      end
+      return
+    end
+
+    if z == 0 then return end
+    if y >= 5 and y <= 7 then
       local selected = x + ((y - 5) * 16)
       if selected <= #patterns then params:set("breakbeat_pattern", selected) end
     elseif x == 16 and y == 8 then
@@ -270,7 +355,7 @@ end
 local function trigger_step(step)
   for lane = 1, 4 do
     local pulses = ratchet_pulses[current[lane][step] + 1]
-    if pulses > 0 and math.random(100) <= gate_probability then
+    if not lane_muted[lane] and pulses > 0 and math.random(100) <= gate_probability then
       if pulses == 1 then
         crow.output[lane]()
       else
@@ -490,6 +575,7 @@ end
 
 function cleanup()
   if sequence_clock then clock.cancel(sequence_clock) end
+  for lane = 1, 4 do stop_roll(lane) end
   crow.input[2].mode("none")
   if old_osc_event then osc.event = old_osc_event end
   if arc_device and arc_device.cleanup then arc_device:cleanup() end
