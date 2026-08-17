@@ -223,8 +223,8 @@ local function stop_roll(lane)
   end
 end
 
-local function toggle_mute(lane)
-  lane_muted[lane] = not lane_muted[lane]
+local function set_mute(lane, muted)
+  lane_muted[lane] = muted
   grid_redraw()
   redraw()
 end
@@ -295,7 +295,7 @@ local function setup_touchosc()
       return
     elseif path:sub(1, #mute_prefix) == mute_prefix then
       local lane = lane_from_path(path, mute_prefix)
-      if lane and args[1] and args[1] > 0 then toggle_mute(lane) end
+      if lane and args[1] ~= nil then set_mute(lane, args[1] > 0) end
       control_redraw()
       return
     elseif path:sub(1, #roll_prefix) == roll_prefix then
