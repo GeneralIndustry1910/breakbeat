@@ -30,12 +30,53 @@ children = page.find("children")
 nodes = list(children.findall("node"))
 
 page_frame = property_value(page, "frame")
-page_frame.find("w").text = "1080"
+page_frame.find("w").text = "1320"
 
 grid = next(node for node in nodes if property_text(node, "name") == "togagrid")
 connection = next(node for node in nodes if property_text(node, "name") == "toga_connection")
+arc_group = next(node for node in nodes if property_text(node, "name") == "togaarc/knob1")
 property_value(grid, "frame").find("x").text = "60"
-property_value(connection, "frame").find("x").text = "1025"
+property_value(connection, "frame").find("x").text = "1265"
+
+# Give the 64 drum cells a receive-only color route. Norns sends color names
+# so the layout can distinguish single, double, and four-pulse gate modes.
+color_script = """function onReceiveOSC(message)
+  local names = {
+    gray = Color(0.22, 0.22, 0.22, 1),
+    yellow = Color(1.00, 0.80, 0.10, 1),
+    blue = Color(0.10, 0.55, 1.00, 1),
+    green = Color(0.15, 0.95, 0.35, 1)
+  }
+  local value = message[2][1] and message[2][1].value
+  if names[value] then self.color = names[value] end
+end"""
+
+for button in list(grid.find("children").findall("node"))[:64]:
+    properties = button.find("properties")
+    script_property = ET.SubElement(properties, "property", {"type": "s"})
+    ET.SubElement(script_property, "key").text = "script"
+    ET.SubElement(script_property, "value").text = color_script
+
+    color_message = ET.SubElement(button.find("messages"), "osc")
+    for key, value in (("enabled", "1"), ("send", "0"), ("receive", "1"),
+                       ("feedback", "0"), ("noDuplicates", "0"),
+                       ("connections", "1111111111")):
+        ET.SubElement(color_message, key).text = value
+    triggers = ET.SubElement(color_message, "triggers")
+    trigger = ET.SubElement(triggers, "trigger")
+    ET.SubElement(trigger, "var").text = "touch"
+    ET.SubElement(trigger, "condition").text = "ANY"
+    path = ET.SubElement(color_message, "path")
+    for kind, value in (("CONSTANT", "/"), ("PROPERTY", "parent.name"),
+                        ("CONSTANT", "/"), ("PROPERTY", "name"),
+                        ("CONSTANT", "/color")):
+        partial = ET.SubElement(path, "partial")
+        ET.SubElement(partial, "type").text = kind
+        ET.SubElement(partial, "conversion").text = "STRING"
+        ET.SubElement(partial, "value").text = value
+        ET.SubElement(partial, "scaleMin").text = "0"
+        ET.SubElement(partial, "scaleMax").text = "1"
+    ET.SubElement(color_message, "arguments")
 
 # Remove Toga's four encoder groups. The connection button and 16x8 grid remain.
 for node in nodes:
@@ -46,6 +87,16 @@ for node in nodes:
 controls = deepcopy(grid)
 controls.set("ID", str(uuid.uuid4()))
 controls.set("type", "GROUP")
+# Color feedback belongs only to the original drum grid, not to the control
+# buttons cloned from it below.
+for button in controls.find("children").findall("node"):
+    for prop in list(button.findall("./properties/property")):
+        if prop.findtext("key") == "script":
+            button.find("properties").remove(prop)
+    messages = button.find("messages")
+    for message in list(messages.findall("osc")):
+        if message.findtext("send") == "0":
+            messages.remove(message)
 property_value(controls, "name").text = "breakbeatcontrol"
 property_value(controls, "background").text = "0"
 property_value(controls, "outline").text = "0"
@@ -112,12 +163,70 @@ def make_lane_buttons(name, x, color_values, button_type=0):
     return group
 
 
+def make_top_button(name, x, color_values):
+    group = make_lane_buttons(name, x, color_values, 1)
+    group_frame = property_value(group, "frame")
+    group_frame.find("y").text = "10"
+    group_frame.find("w").text = "180"
+    group_frame.find("h").text = "60"
+    group_children = group.find("children")
+    lane_buttons = list(group_children.findall("node"))
+    for button in lane_buttons[1:]:
+        group_children.remove(button)
+    button_frame = property_value(lane_buttons[0], "frame")
+    button_frame.find("w").text = "174"
+    return group
+
+
+def make_swing_fader():
+    group = deepcopy(arc_group)
+    group.set("ID", str(uuid.uuid4()))
+    property_value(group, "name").text = "breakbeatswing"
+    group_frame = property_value(group, "frame")
+    group_frame.find("x").text = "1020"
+    group_frame.find("y").text = "90"
+    group_frame.find("w").text = "280"
+    group_frame.find("h").text = "70"
+
+    fader = group.find("./children/node")
+    fader.set("ID", str(uuid.uuid4()))
+    fader.set("type", "FADER")
+    property_value(fader, "name").text = "fader"
+    fader_frame = property_value(fader, "frame")
+    fader_frame.find("x").text = "10"
+    fader_frame.find("y").text = "10"
+    fader_frame.find("w").text = "260"
+    fader_frame.find("h").text = "50"
+    color = property_value(fader, "color")
+    color.find("r").text = "1.0"
+    color.find("g").text = "0.70"
+    color.find("b").text = "0.15"
+    properties = fader.find("properties")
+    for key, type_name, value in (("bar", "b", "1"), ("barDisplay", "i", "2"), ("centered", "b", "0")):
+        prop = ET.SubElement(properties, "property", {"type": type_name})
+        ET.SubElement(prop, "key").text = key
+        ET.SubElement(prop, "value").text = value
+    return group
+
+
 roll_buttons = make_lane_buttons("breakbeatroll", 0, (1.0, 0.55, 0.10))
 mute_buttons = make_lane_buttons("breakbeatmute", 1020, (1.0, 0.15, 0.15), 1)
+probability_buttons = make_lane_buttons("breakbeatprobability", 1080, (0.20, 0.95, 0.45), 1)
+mutation_buttons = make_lane_buttons("breakbeatmutation", 1140, (0.10, 0.75, 1.00), 1)
+chaos_buttons = make_lane_buttons("breakbeatchaos", 1200, (1.00, 0.35, 0.65), 1)
+clear_buttons = make_lane_buttons("breakbeatclear", 1260, (0.95, 0.95, 0.95))
+cv_button = make_top_button("breakbeatcv", 1020, (0.10, 0.75, 1.00))
+swing_fader = make_swing_fader()
 
 children.insert(0, controls)
 children.insert(1, roll_buttons)
 children.insert(2, mute_buttons)
+children.insert(3, probability_buttons)
+children.insert(4, mutation_buttons)
+children.insert(5, chaos_buttons)
+children.insert(6, clear_buttons)
+children.insert(7, cv_button)
+children.insert(8, swing_fader)
 xml = ET.tostring(document, encoding="utf-8", xml_declaration=True)
 OUTPUT.write_bytes(zlib.compress(xml, level=9))
 print(f"wrote {OUTPUT} ({len(xml)} bytes uncompressed)")

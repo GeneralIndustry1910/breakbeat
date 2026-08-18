@@ -45,8 +45,12 @@ The lower grid and its side buttons are arranged as follows:
 - Row 5: patterns 1-16
 - Row 6: patterns 17-32
 - Row 7: patterns 33-38
-- Red buttons on the right: mute/unmute each drum lane
+- Right-side red buttons: mute/unmute each drum lane
+- Right-side green, blue, and pink buttons: enable/disable probability, mutation, and chaos for each lane
+- Right-side white buttons: immediately clear every trigger in that lane
 - Bottom-right button: restore the selected pattern to its authored version
+
+The blue button above the right-side controls enables Crow input 2 mutation CV. It is off by default. The yellow horizontal fader sets swing from straight (50%) to heavily swung (75%).
 
 Rows 1-4 display the actual pattern currently playing, including mutation, rotation, and reversal. The playhead is highlighted.
 
@@ -56,7 +60,7 @@ Short-tap a drum step repeatedly to cycle through its gate modes:
 off -> single pulse -> two pulses -> four pulses -> off
 ```
 
-Two- and four-pulse ratchets are evenly synchronized inside the current 16th-note step, so they continue to follow the selected Norns clock source. Increasing LED brightness indicates single, double, and four-pulse gates.
+Two- and four-pulse ratchets are evenly synchronized inside the current 16th-note step, so they continue to follow the selected Norns clock source. Step colors show the mode: yellow is a single pulse, blue is two pulses, and green is four pulses. The next tap turns the step off.
 
 Press and hold an individual drum step for about half a second, then release it, to clear that trigger directly without cycling through the ratchet modes.
 
@@ -70,9 +74,9 @@ Manual edits are maintained separately for each pattern during the current sessi
 - Crow output 2: snare trigger
 - Crow output 3: hat trigger
 - Crow output 4: percussion trigger
-- Crow input 2: bipolar mutation CV, 20 mutation points per volt
+- Crow input 2: optional bipolar mutation CV, 20 mutation points per volt
 
-The mutation CV is added to the Norns mutation setting and clamped to 0-100. At 0 V, the Norns setting is unchanged.
+Crow input 2 is disabled at startup. Enable it with the blue TouchOSC button when you want Pam's CV to affect the pattern. The mutation CV is added to the Norns mutation setting and clamped to 0-100.
 
 ## Norns controls
 
@@ -81,6 +85,8 @@ The mutation CV is added to the Norns mutation setting and clamped to 0-100. At 
 - E3: base mutation
 - K2: restore the selected pattern
 - K3: play/stop
+
+The PARAMS menu also includes Swing (50-75%).
 
 ## Physical Arc controls
 
