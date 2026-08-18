@@ -1,6 +1,6 @@
 -- breakbeat
 -- four-lane breakbeat trigger sequencer for norns + crow
--- v1.4.0
+-- v1.5.0
 
 local arc_source = arc
 local grid_source = grid
@@ -55,9 +55,11 @@ local lane_names = { "K", "S", "H", "P" }
 local pattern_index = 1
 local mutation_base = 0
 local mutation_cv = 0
+local crow_cv_enabled = false
 local mutation = 0
 local gate_probability = 100
 local chaos = 0
+local swing = 50
 local loop_length = 16
 local position = 0
 local playing = true
@@ -69,9 +71,13 @@ local edited_patterns = {}
 local old_osc_event = nil
 local ratchet_pulses = { 0, 1, 2, 4 }
 local lane_muted = { false, false, false, false }
+local lane_probability_enabled = { true, true, true, true }
+local lane_mutation_enabled = { true, true, true, true }
+local lane_chaos_enabled = { true, true, true, true }
 local roll_active = { false, false, false, false }
 local roll_clocks = {}
 local step_press = {}
+local step_color_cache = {}
 
 local function clamp(value, low, high)
   return math.max(low, math.min(high, value))
@@ -132,10 +138,12 @@ local function make_variation()
     -- At maximum, each cell has a 30% chance of changing state.
     local chance = (mutation / 100) * 0.30
     for lane = 1, 4 do
+      if lane_mutation_enabled[lane] then
       for step = 1, 16 do
         if math.random() < chance then
           current[lane][step] = current[lane][step] > 0 and 0 or 1
         end
+      end
       end
     end
   end
@@ -145,11 +153,13 @@ local function make_variation()
   if chaos > 0 then
     local max_shift = math.max(1, math.floor(chaos / 25))
     for lane = 1, 4 do
+      if lane_chaos_enabled[lane] then
       if math.random(100) <= chaos then
         current[lane] = rotate_row(current[lane], math.random(-max_shift, max_shift))
       end
       if math.random(200) <= chaos then
         current[lane] = reverse_row(current[lane])
+      end
       end
     end
   end
@@ -200,6 +210,31 @@ local function grid_redraw()
   -- Bottom-right button restores the selected pattern's authored version.
   grid_device:led(16, 8, 10)
   grid_device:refresh()
+
+  if grid_device.dest then
+    local colors = { "gray", "yellow", "blue", "green" }
+    for _, destination in pairs(grid_device.dest) do
+      for lane = 1, 4 do
+        for step = 1, 16 do
+          local index = step + ((lane - 1) * 16)
+          local mode = current[lane][step]
+          if step_color_cache[index] ~= mode then
+            osc.send(destination, "/togagrid/" .. index .. "/color", { colors[mode + 1] })
+            step_color_cache[index] = mode
+          end
+        end
+      end
+    end
+  end
+end
+
+local function clear_lane(lane)
+  local pattern = editable_pattern()
+  for step = 1, 16 do pattern[lane][step] = 0 end
+  make_variation()
+  step_color_cache = {}
+  grid_redraw()
+  redraw()
 end
 
 local function roll_loop(lane)
@@ -251,8 +286,32 @@ local function control_redraw()
         { lane_muted[lane] and 1 or 0 })
       osc.send(destination, "/breakbeatroll/" .. lane,
         { roll_active[lane] and 1 or 0 })
+      osc.send(destination, "/breakbeatprobability/" .. lane,
+        { lane_probability_enabled[lane] and 1 or 0 })
+      osc.send(destination, "/breakbeatmutation/" .. lane,
+        { lane_mutation_enabled[lane] and 1 or 0 })
+      osc.send(destination, "/breakbeatchaos/" .. lane,
+        { lane_chaos_enabled[lane] and 1 or 0 })
+      osc.send(destination, "/breakbeatclear/" .. lane, { 0 })
     end
+    osc.send(destination, "/breakbeatcv/1", { crow_cv_enabled and 1 or 0 })
+    osc.send(destination, "/breakbeatswing/fader", { (swing - 50) / 25 })
   end
+end
+
+local function set_crow_cv_enabled(enabled)
+  crow_cv_enabled = enabled
+  if enabled then
+    crow.input[2].mode("stream", 0.1)
+  else
+    crow.input[2].mode("none")
+    mutation_cv = 0
+    update_mutation()
+    make_variation()
+  end
+  control_redraw()
+  grid_redraw()
+  redraw()
 end
 
 local function handle_touchosc_control(path, args)
@@ -290,6 +349,10 @@ local function setup_touchosc()
     local control_prefix = "/breakbeatcontrol/"
     local mute_prefix = "/breakbeatmute/"
     local roll_prefix = "/breakbeatroll/"
+    local probability_prefix = "/breakbeatprobability/"
+    local mutation_prefix = "/breakbeatmutation/"
+    local chaos_prefix = "/breakbeatchaos/"
+    local clear_prefix = "/breakbeatclear/"
     if path:sub(1, #control_prefix) == control_prefix then
       handle_touchosc_control(path, args)
       return
@@ -305,10 +368,49 @@ local function setup_touchosc()
       end
       control_redraw()
       return
+    elseif path:sub(1, #probability_prefix) == probability_prefix then
+      local lane = lane_from_path(path, probability_prefix)
+      if lane and args[1] ~= nil then lane_probability_enabled[lane] = args[1] > 0 end
+      control_redraw()
+      return
+    elseif path:sub(1, #mutation_prefix) == mutation_prefix then
+      local lane = lane_from_path(path, mutation_prefix)
+      if lane and args[1] ~= nil then
+        lane_mutation_enabled[lane] = args[1] > 0
+        make_variation()
+        grid_redraw()
+      end
+      control_redraw()
+      return
+    elseif path:sub(1, #chaos_prefix) == chaos_prefix then
+      local lane = lane_from_path(path, chaos_prefix)
+      if lane and args[1] ~= nil then
+        lane_chaos_enabled[lane] = args[1] > 0
+        make_variation()
+        grid_redraw()
+      end
+      control_redraw()
+      return
+    elseif path:sub(1, #clear_prefix) == clear_prefix then
+      local lane = lane_from_path(path, clear_prefix)
+      if lane and args[1] and args[1] > 0 then clear_lane(lane) end
+      control_redraw()
+      return
+    elseif path == "/breakbeatcv/1" then
+      if args[1] ~= nil then set_crow_cv_enabled(args[1] > 0) end
+      return
+    elseif path == "/breakbeatswing/fader" then
+      if args[1] ~= nil then params:set("breakbeat_swing", 50 + (clamp(args[1], 0, 1) * 25)) end
+      control_redraw()
+      return
     end
 
     if old_osc_event then old_osc_event(path, args, from) end
-    if path:sub(1, 16) == "/toga_connection" then control_redraw() end
+    if path:sub(1, 16) == "/toga_connection" then
+      step_color_cache = {}
+      control_redraw()
+      grid_redraw()
+    end
   end
 end
 
@@ -355,7 +457,9 @@ end
 local function trigger_step(step)
   for lane = 1, 4 do
     local pulses = ratchet_pulses[current[lane][step] + 1]
-    if not lane_muted[lane] and pulses > 0 and math.random(100) <= gate_probability then
+    local passes_probability = not lane_probability_enabled[lane]
+      or math.random(100) <= gate_probability
+    if not lane_muted[lane] and pulses > 0 and passes_probability then
       if pulses == 1 then
         crow.output[lane]()
       else
@@ -370,6 +474,10 @@ local function sequence_loop()
     if playing then
       clock.sync(1 / 4)
       position = (position % loop_length) + 1
+      if position % 2 == 0 and swing > 50 then
+        local delay_beats = (0.5 * (swing / 100)) - 0.25
+        clock.sleep(clock.get_beat_sec() * delay_beats)
+      end
       if position == 1 then make_variation() end
       trigger_step(position)
       redraw()
@@ -428,11 +536,12 @@ function init()
   end
 
   crow.input[2].stream = function(volts)
+    if not crow_cv_enabled then return end
     mutation_cv = clamp(volts * 20, -100, 100)
     update_mutation()
     redraw()
   end
-  crow.input[2].mode("stream", 0.1)
+  crow.input[2].mode("none")
 
   params:add_number("breakbeat_bpm", "BPM", 40, 240, 120)
   params:set_action("breakbeat_bpm", function(value)
@@ -491,6 +600,13 @@ function init()
     control_redraw()
     redraw()
     grid_redraw()
+  end)
+
+  params:add_number("breakbeat_swing", "Swing", 50, 75, 50)
+  params:set_action("breakbeat_swing", function(value)
+    swing = value
+    control_redraw()
+    redraw()
   end)
 
   params:set("clock_tempo", params:get("breakbeat_bpm"))
@@ -569,7 +685,7 @@ function redraw()
   screen.move(2, 63)
   screen.text("B" .. params:get("breakbeat_bpm") .. " M" .. math.floor(mutation + 0.5))
   screen.move(126, 63)
-  screen.text_right("G" .. gate_probability .. " C" .. chaos .. " L" .. loop_length)
+  screen.text_right("G" .. gate_probability .. " C" .. chaos .. " S" .. math.floor(swing))
   screen.update()
 end
 
